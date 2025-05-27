@@ -2,6 +2,7 @@
 pragma solidity ^0.8.28;
 
 import {ERC20Upgradeable, IERC20} from "@openzeppelin/contracts-upgradeable/token/ERC20/ERC20Upgradeable.sol";
+//an interface for getting some metadata from a token or tokenized vault
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {IERC20Errors} from "@openzeppelin/contracts/interfaces/draft-IERC6093.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -10,6 +11,7 @@ import {ReentrancyGuardUpgradeable} from "@openzeppelin/contracts-upgradeable/ut
 import {Controllable, IControllable} from "../base/Controllable.sol";
 import {CommonLib} from "../libs/CommonLib.sol";
 import {VaultTypeLib} from "../libs/VaultTypeLib.sol";
+//
 import {IMetaVault, IStabilityVault, EnumerableSet} from "../../interfaces/IMetaVault.sol";
 import {IPriceReader} from "../../interfaces/IPriceReader.sol";
 import {IPlatform} from "../../interfaces/IPlatform.sol";
@@ -58,7 +60,7 @@ contract MetaVault is Controllable, ReentrancyGuardUpgradeable, IERC20Errors, IM
     /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
     /*                      INITIALIZATION                        */
     /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
+    //@>i in the init phase we give vaults array 
     /// @inheritdoc IMetaVault
     function initialize(
         address platform_,
@@ -129,7 +131,7 @@ contract MetaVault is Controllable, ReentrancyGuardUpgradeable, IERC20Errors, IM
         );
 
         (uint tvlBefore,) = tvl();
-
+        //@>q only multivault is supported?
         if (CommonLib.eq($._type, VaultTypeLib.MULTIVAULT)) {
             address[] memory _assets = $.assets.values();
             for (uint i; i < len; ++i) {
@@ -229,6 +231,7 @@ contract MetaVault is Controllable, ReentrancyGuardUpgradeable, IERC20Errors, IM
 
     /// @inheritdoc IStabilityVault
     function setLastBlockDefenseDisabled(bool isDisabled) external onlyGovernanceOrMultisig {
+        //@>q why governance can block defense mechanism? can they use this hurt someone?
         MetaVaultStorage storage $ = _getMetaVaultStorage();
         $.lastBlockDefenseDisabled = isDisabled;
         emit LastBlockDefenseDisabled(isDisabled);
@@ -245,24 +248,32 @@ contract MetaVault is Controllable, ReentrancyGuardUpgradeable, IERC20Errors, IM
         uint minSharesOut,
         address receiver
     ) external nonReentrant {
+
         MetaVaultStorage storage $ = _getMetaVaultStorage();
 
         _beforeDepositOrWithdraw($, receiver);
 
         DepositAssetsVars memory v;
+        //@>i Calculate the target vault based on current proportions
         v.targetVault = vaultForDeposit();
+
         v.totalSupplyBefore = totalSupply();
         v.totalSharesBefore = $.totalShares;
+
         v.len = assets_.length;
         v.balanceBefore = new uint[](v.len);
         v.amountsConsumed = new uint[](v.len);
+        //@>i transfer assets from user to contract 
         for (uint i; i < v.len; ++i) {
             IERC20(assets_[i]).safeTransferFrom(msg.sender, address(this), amountsMax[i]);
             v.balanceBefore[i] = IERC20(assets_[i]).balanceOf(address(this));
             IERC20(assets_[i]).forceApprove(v.targetVault, amountsMax[i]);
         }
         uint targetVaultSharesBefore = IERC20(v.targetVault).balanceOf(address(this));
+        //@>i Deposit assets into the target vault
         IStabilityVault(v.targetVault).depositAssets(assets_, amountsMax, 0, address(this));
+
+        //@>i Calculate consumed amounts and refund excess to user
         for (uint i; i < v.len; ++i) {
             v.amountsConsumed[i] = v.balanceBefore[i] - IERC20(assets_[i]).balanceOf(address(this));
             uint refund = amountsMax[i] - v.amountsConsumed[i];
@@ -270,12 +281,16 @@ contract MetaVault is Controllable, ReentrancyGuardUpgradeable, IERC20Errors, IM
                 IERC20(assets_[i]).safeTransfer(msg.sender, refund);
             }
         }
-
+        //@>i Calculate consumed amounts and refund excess to user
         {
             (uint targetVaultPrice,) = IStabilityVault(v.targetVault).price();
             uint targetVaultSharesAfter = IERC20(v.targetVault).balanceOf(address(this));
             uint depositedTvl = (targetVaultSharesAfter - targetVaultSharesBefore) * targetVaultPrice / 1e18;
+
+
+            //@>i Calculate shares to mint based on whether this is first deposit or not
             uint balanceOut = _usdAmountToMetaVaultBalance(depositedTvl);
+
             uint sharesToCreate;
             if (v.totalSharesBefore == 0) {
                 sharesToCreate = balanceOut;
@@ -285,6 +300,7 @@ contract MetaVault is Controllable, ReentrancyGuardUpgradeable, IERC20Errors, IM
 
             _mint($, receiver, sharesToCreate, balanceOut);
 
+            //@>i Check slippage tolerance
             if (balanceOut < minSharesOut) {
                 revert ExceedSlippage(balanceOut, minSharesOut);
             }
@@ -293,6 +309,7 @@ contract MetaVault is Controllable, ReentrancyGuardUpgradeable, IERC20Errors, IM
             emit DepositAssets(receiver, assets_, v.amountsConsumed, balanceOut);
         }
 
+        //@>i Initialize APR tracking data if this is the first deposit
         if ($.storedTime == 0) {
             $.storedTime = block.timestamp;
             ($.storedSharePrice,,,) = internalSharePrice();
@@ -335,11 +352,16 @@ contract MetaVault is Controllable, ReentrancyGuardUpgradeable, IERC20Errors, IM
 
     /// @inheritdoc IERC20
     function transferFrom(address from, address to, uint amount) public returns (bool) {
+        //@>q this function does not have any check for from balance? who is calling this? 
         require(to != address(0), ERC20InvalidReceiver(to));
-        MetaVaultStorage storage $ = _getMetaVaultStorage();
+        MetaVaultStorage storage $ = _getMetaVaultStorage(); 
         _spendAllowanceOrBlock(from, msg.sender, amount);
         _checkLastBlockProtection($, from);
         uint shareTransfer = _amountToShares(amount, $.totalShares, totalSupply());
+        //@>audit Subtracting without checking if sufficient balance exists. this can revert with solidity built-in underflow revert. Greifing attack? dos?
+        // add this line to check:
+        // require($.shareBalance[from] >= shareTransfer, "ERC20: transfer amount exceeds balance");
+
         $.shareBalance[from] -= shareTransfer;
         $.shareBalance[to] += shareTransfer;
         _update($, from, to, amount);
@@ -379,6 +401,7 @@ contract MetaVault is Controllable, ReentrancyGuardUpgradeable, IERC20Errors, IM
     }
 
     /// @inheritdoc IMetaVault
+    //@>i return target vault
     function vaultForDeposit() public view returns (address target) {
         MetaVaultStorage storage $ = _getMetaVaultStorage();
         address[] memory _vaults = $.vaults;
@@ -386,6 +409,7 @@ contract MetaVault is Controllable, ReentrancyGuardUpgradeable, IERC20Errors, IM
             return _vaults[0];
         }
         uint len = _vaults.length;
+        //@>q how does this proportion system work? why does this contract/protocol use proportion system?
         uint[] memory _proportions = currentProportions();
         uint[] memory _targetProportions = targetProportions();
         uint lowProportionDiff;
@@ -487,6 +511,7 @@ contract MetaVault is Controllable, ReentrancyGuardUpgradeable, IERC20Errors, IM
         address _targetVault = vaultForDeposit();
         uint targetVaultSharesOut;
         uint targetVaultStrategyValueOut;
+        //@>q what's this price? can we trust it? 
         (uint targetVaultSharePrice,) = IStabilityVault(_targetVault).price();
         (amountsConsumed, targetVaultSharesOut, targetVaultStrategyValueOut) =
             IStabilityVault(_targetVault).previewDepositAssets(assets_, amountsMax);
@@ -618,11 +643,14 @@ contract MetaVault is Controllable, ReentrancyGuardUpgradeable, IERC20Errors, IM
     }
 
     function _checkLastBlockProtection(MetaVaultStorage storage $, address owner) internal view {
+        //@>i _TRANSFER_DELAY_BLOCKS = 5 s
         if (!$.lastBlockDefenseDisabled && $.lastTransferBlock[owner] + _TRANSFER_DELAY_BLOCKS >= block.number) {
             revert WaitAFewBlocks();
         }
     }
 
+
+    //@>q Withdrawals involve multiple calculations and conversions, which could lead to precision issues
     function _withdrawAssets(
         address[] memory assets_,
         uint amount,
@@ -630,6 +658,7 @@ contract MetaVault is Controllable, ReentrancyGuardUpgradeable, IERC20Errors, IM
         address receiver,
         address owner
     ) internal returns (uint[] memory amountsOut) {
+        
         if (msg.sender != owner) {
             _spendAllowanceOrBlock(owner, msg.sender, amount);
         }
@@ -644,29 +673,37 @@ contract MetaVault is Controllable, ReentrancyGuardUpgradeable, IERC20Errors, IM
         }
 
         MetaVaultStorage storage $ = _getMetaVaultStorage();
-
+        //@>i Enforce block defense delay protection
         _beforeDepositOrWithdraw($, owner);
-
+        //Calculate shares to burn based on withdrawal amount
         uint sharesToBurn = _amountToShares(amount, $.totalShares, totalSupply());
         require(sharesToBurn != 0, ZeroSharesToBurn(amount));
-
+        //Determine which vault to withdraw from based on proportions
         address _targetVault = vaultForWithdraw();
+        //Check maximum withdrawal amount per transaction
         (uint maxAmountToWithdrawFromVault, uint vaultSharePriceUsd) = _maxAmountToWithdrawFromVault(_targetVault);
         require(
             amount <= maxAmountToWithdrawFromVault,
             MaxAmountForWithdrawPerTxReached(amount, maxAmountToWithdrawFromVault)
         );
 
+
+        //Check minimum USD threshold (0.0001 USDC)
         uint usdToWithdraw = _metaVaultBalanceToUsdAmount(amount);
 
         require(usdToWithdraw > USD_THRESHOLD, UsdAmountLessThreshold(usdToWithdraw, USD_THRESHOLD));
 
-        uint targetVaultSharesToWithdraw = usdToWithdraw * 1e18 / vaultSharePriceUsd;
 
+        // Convert USD amount to vault shares for withdrawal
+        uint targetVaultSharesToWithdraw = usdToWithdraw * 1e18 / vaultSharePriceUsd;
+        //Execute withdrawal from the target vault = VaultBase._withdrawAssets()
+        //@>q any target vault with IStabilityVault will use vaultBase contract? 
         amountsOut = IStabilityVault(_targetVault).withdrawAssets(
             assets_, targetVaultSharesToWithdraw, minAssetAmountsOut, receiver, address(this)
         );
+        //@>q slippage check missing? no 
 
+         //Burn the calculated shares from the owner's balance
         _burn($, owner, amount, sharesToBurn);
 
         $.lastTransferBlock[receiver] = block.number;
@@ -707,13 +744,13 @@ contract MetaVault is Controllable, ReentrancyGuardUpgradeable, IERC20Errors, IM
         return amount * priceAsset / 1e18;
     }
 
-    function _amountToShares(uint amount, uint totalShares_, uint totalSupply_) internal pure returns (uint) {
+   function _amountToShares(uint amount, uint totalShares_, uint totalSupply_) internal pure returns (uint) {
         if (totalSupply_ == 0) {
             return 0;
         }
         return amount * totalShares_ / totalSupply_;
     }
-
+ 
     function _spendAllowanceOrBlock(address owner, address spender, uint amount) internal {
         MetaVaultStorage storage $ = _getMetaVaultStorage();
         uint currentAllowance = $.allowance[owner][spender];

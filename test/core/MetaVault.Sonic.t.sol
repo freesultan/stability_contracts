@@ -40,6 +40,7 @@ contract MetaVaultSonicTest is Test {
     }
 
     function setUp() public {
+        console.log("Setup begins");
         multisig = IPlatform(PLATFORM).multisig();
         priceReader = IPriceReader(IPlatform(PLATFORM).priceReader());
         metaVaultFactory = IMetaVaultFactory(SonicConstantsLib.METAVAULT_FACTORY);
@@ -96,6 +97,7 @@ contract MetaVaultSonicTest is Test {
     }
 
     function test_universal_metavault() public {
+        console.log("universal metavault test begins...");
         // test all metavaults
         for (uint i; i < metaVaults.length; ++i) {
             address metavault = metaVaults[i];

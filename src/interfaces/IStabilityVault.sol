@@ -67,7 +67,7 @@ interface IStabilityVault is IERC20, IERC20Metadata {
     /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
     /*                      WRITE FUNCTIONS                       */
     /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
+    
     /// @dev Deposit final assets (pool assets) to the strategy and minting of vault shares.
     ///      If the strategy interacts with a pool or farms through an underlying token, then it will be minted.
     ///      Emits a {DepositAssets} event with consumed amounts.
