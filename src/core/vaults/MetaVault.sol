@@ -414,6 +414,7 @@ contract MetaVault is Controllable, ReentrancyGuardUpgradeable, IERC20Errors, IM
         uint[] memory _targetProportions = targetProportions();
         uint lowProportionDiff;
         target = _vaults[0];
+        //@>i choose the vault from those whose proportion is below target and with the highest diff between target and current proportion
         for (uint i; i < len; ++i) {
             if (_proportions[i] < _targetProportions[i]) {
                 uint diff = _targetProportions[i] - _proportions[i];
@@ -474,6 +475,7 @@ contract MetaVault is Controllable, ReentrancyGuardUpgradeable, IERC20Errors, IM
     }
 
     /// @inheritdoc IMetaVault
+    //@>audit critical area
     function internalSharePrice()
         public
         view
@@ -627,6 +629,8 @@ contract MetaVault is Controllable, ReentrancyGuardUpgradeable, IERC20Errors, IM
         require(total == 1e18, IncorrectProportions());
     }
 
+
+    //@>audit mint,burn, and transfer call update = update delay mechanism. Everyone with zero transfer can update lastTransferBlock and hence griefing attack and block withdrawals (reported)
     function _update(MetaVaultStorage storage $, address from, address to, uint amount) internal {
         if (!$.lastBlockDefenseDisabled) {
             $.lastTransferBlock[from] = block.number;
